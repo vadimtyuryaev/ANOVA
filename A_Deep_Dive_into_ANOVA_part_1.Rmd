@@ -1,7 +1,7 @@
 ---
 title: "A Deep Dive into ANOVA (part 1)"
 author: "Vadim Tyuryaev"
-date: "2025-01-11"
+date: "2024-01-11"
 output: html_document
 ---
   
@@ -87,7 +87,7 @@ summary(result_2)
 
 ```
 
-The results are identical. 
+The results are **identical**. 
 
 # BONUS: Groups Visualization with [`ggplot2`](https://ggplot2.tidyverse.org/)
 
