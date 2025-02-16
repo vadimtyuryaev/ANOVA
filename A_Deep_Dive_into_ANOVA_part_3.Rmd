@@ -1,0 +1,238 @@
+---
+title: "A Deep Dive into ANOVA (part 3)"
+author: "Vadim Tyuryaev"
+date: "2024-02-22"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+# Set global chunk options
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Type I Error in Pairwise Comparisons
+
+In multiple testing scenarios, it is essential to account for the inflation
+of Type I error. First, we compute the number of pairwise comparisons among 
+6 groups using the combination formula, \(C(6,2)\). Then, we calculate the
+probability of encountering at least one false positive when performing 15 
+independent tests at a significance level of 0.05.
+
+```{r combinatorial_calculations, echo=TRUE}
+
+# Compute the number of pairwise comparisons among 6 groups: C(6,2)
+num_comparisons <- factorial(6) / (factorial(2) * factorial(4))
+num_comparisons
+
+# Compute the overall probability of no false positives for 15 tests
+p_avoid_type1_error <- (1 - 0.05)^15
+p_avoid_type1_error
+
+# Compute the probability of at least one false positive
+p_atleast1_type1_error <- 1 - p_avoid_type1_error
+p_atleast1_type1_error
+
+```
+
+# Simulation of Multiple Pairwise Comparisons
+
+We now simulate a scenario where 6 independent samples (each of size 50) are 
+drawn from the same population. For every possible pair, a two-sample t-test 
+is conducted. We then calculate the proportion of tests that yield a
+p-value below the 0.05 significance threshold. 
+
+```{r combinatorial_calculations_2, echo=TRUE}
+
+# Set seed for reproducibility
+set.seed(1945)
+
+# Preallocate a matrix to store 6 samples, each of size 50
+r_matrix <- matrix(NA, nrow = 50, ncol = 6)
+
+# Generate 6 samples drawn from a Normal distribution (mean = 5, sd = 3)
+r_matrix <- apply(r_matrix, 2, function(x){ rnorm(50, mean = 5, sd = 3) })
+
+# Generate all possible pairs of sample indices (i.e., pairwise comparisons)
+pairwise_comparisons <- combn(1:ncol(r_matrix), 2)
+
+# Conduct t-tests for each pair and extract the p-values
+multiple_comparisons <- apply(pairwise_comparisons, 2, function(indexes) {
+  group1 <- r_matrix[, indexes[1]]
+  group2 <- r_matrix[, indexes[2]]
+  t_test_result <- t.test(group1, group2)
+  return(t_test_result$p.value)
+})
+
+# Identify significant comparisons at alpha = 0.05
+significant_results <- multiple_comparisons < 0.05
+
+# Calculate the proportion of significant results
+proportion_significant <- sum(significant_results) / length(multiple_comparisons)
+proportion_significant
+
+```
+
+# Analysis of the [`ChickWeight`](https://www.rdocumentation.org/packages/datasets/versions/3.6.2/topics/ChickWeight) Dataset
+
+The `ChickWeight` dataset provides a valuable framework for studying growth
+patterns under different dietary conditions. Here, we extract the final 
+weights for each chick and examine the distribution of observations across
+the diet groups.
+
+```{r chickweight_data, echo=TRUE}
+
+# Load the ChickWeight dataset
+data(ChickWeight)
+
+# Subset to obtain the final weights for each chick (i.e., at the maximum recorded time)
+final_weights <- ChickWeight[ChickWeight$Time == max(ChickWeight$Time), ]
+
+# Remove the unique identifier column (assumed to be the third column)
+final_weights <- final_weights[, -3]
+
+# Preview the structure of the dataset
+head(final_weights)
+
+# Determine the total number of observations (N) and the distribution per diet (n)
+total_observations <- dim(final_weights)[1]
+group_counts <- table(final_weights$Diet)
+total_observations
+group_counts
+
+```
+
+#  Balancing the Dataset
+
+For demonstration purposes, we address the issue of unequal group sizes by 
+balancing the dataset through random sampling, ensuring that each diet group 
+contributes an equal number of observations. Specifically, we use the minimum 
+group size as the target for this balancing procedure. This approach facilitates
+the application of classical ANOVA methods, which assume a balanced design. 
+However, in practical settings—where rigorous data analysis and nuanced
+interpretation are essential—it is advisable to employ alternative statistical
+techniques (such as [Welch's ANOVA](https://rips-irsp.com/articles/10.5334/irsp.198), 
+[Generalized Linear Models](https://books.google.ca/books/about/ANOVA_and_ANCOVA.html?id=c5aOZEniMqwC&redir_esc=y), or [linear mixed-effects models](https://onlinelibrary.wiley.com/doi/10.1111/j.1439-037X.2004.00120.x)) that are capable of 
+handling unequal group sizes.
+
+```{r balancing, echo=TRUE}
+
+# Function to balance the dataset based on a specified factor variable and target size
+balance_data <- function(data, factor_var_name, min_size) {
+  split_data <- split(data, data[[factor_var_name]])
+  balanced_data <- lapply(split_data, function(sub_data) {
+    if (nrow(sub_data) > min_size) {
+      sub_data[sample(nrow(sub_data), min_size), ]
+    } else {
+      sub_data
+    }
+  })
+  do.call(rbind, balanced_data)
+}
+
+# Determine the minimum group size across diets
+min_size <- min(table(final_weights$Diet))
+
+# Set seed for reproducibility
+set.seed(1913)
+
+# Generate a balanced dataset using the defined function
+final_weights_balanced <- balance_data(final_weights, "Diet", min_size)
+
+```
+
+# One-Way ANOVA Analysis
+
+With a balanced dataset, we conduct a one-way ANOVA to evaluate the effect of
+the diet on chick weight. The ANOVA summary is stored for subsequent calculations.
+
+```{r one_way_anova, echo=TRUE}
+
+# Run ANOVA to assess the effect of Diet on weight
+anova_result <- aov(weight ~ Diet, data = final_weights_balanced)
+
+# Save the ANOVA summary to extract the Mean Square Error (MSE) later
+anova_summary <- summary(anova_result)
+anova_summary
+
+```
+
+# Manual Implementation of Tukey's HSD Test
+
+We manually implement Tukey's Honest Significant Difference (HSD) test. This 
+involves calculating the Mean Square Error (MSE), group means, and 
+pairwise differences. These values are used to compute the test statistic (q value) 
+and compare it with the critical value obtained from the Studentized range
+distribution.
+
+```{r hsd_function, echo=TRUE}
+
+# Extract the Mean Square Error (MSE) from the ANOVA summary
+MSE <- anova_summary[[1]][["Mean Sq"]][2]
+
+# Define variables necessary for further calculations:
+# Total number of observations (N), sample size per group (n), and number of groups (k)
+N <- dim(final_weights_balanced)[1]
+n <- as.numeric(table(final_weights_balanced$Diet)[1])
+k <- length(unique(final_weights_balanced$Diet))
+
+# Calculate the mean weight for each diet group
+group_means <- tapply(final_weights_balanced$weight, final_weights_balanced$Diet, mean)
+
+# Generate all possible pairwise comparisons among the diet groups
+comparisons <- combn(levels(final_weights_balanced$Diet), 2)
+
+# Manually compute Tukey's HSD test for each pairwise comparison
+tukey_test <- apply(comparisons, 2, function(pair) {
+  x <- group_means[pair[1]]
+  y <- group_means[pair[2]]
+  mean_diff <- abs(x - y)
+  
+  # Compute the test statistic (q value)
+  q_value <- mean_diff / sqrt(MSE / n)
+  
+  # Determine the critical value from the Studentized range distribution
+  critical_value <- qtukey(p = 0.95, nmeans = k, df = N - k)
+  
+  # Compute the HSD (minimum difference required for significance)
+  hsd <- critical_value * sqrt(MSE / n)
+  
+  # Assess whether the observed difference is statistically significant
+  significant <- as.numeric(q_value >= critical_value)
+  
+  return(c(pair, round(mean_diff, 5), round(hsd, 5), round(q_value, 5), 
+           round(critical_value, 5), significant))
+})
+
+# Transpose the result for improved readability and assign column names
+tukey_test <- t(tukey_test)
+colnames(tukey_test) <- c("Group 1", "Group 2", "Mean Abs Diff", "HSD", 
+                          "Q Value", "Critical Value", "Significant")
+tukey_test
+
+```
+
+# HSD Test and Visualization
+
+For comparative purposes, we also perform Tukey's HSD test using R's built-in 
+function and visualize the results. This provides a useful benchmark against
+our manual implementation.
+
+```{r hsd_visualization, echo=TRUE}
+
+# Perform Tukey's HSD test using the built-in function
+tukey_builtin <- TukeyHSD(anova_result)
+tukey_builtin
+
+# Plot the Tukey HSD results for visual inspection
+plot(tukey_builtin)
+
+```
+
+It is important to emphasize that the primary objective of this demonstration 
+is not the data analysis per se, but rather to illustrate the inner workings and
+practical applications of Tukey's HSD test. Notably, the random sampling
+procedure employed to balance the groups for subsequent ANOVA analysis can 
+influence the test outcomes. Specifically, if the procedure is repeated using 
+a different random seed, the resulting balanced dataset may differ, potentially
+leading to variations in the results—where differences deemed non-significant in 
+one instance might become significant in another.

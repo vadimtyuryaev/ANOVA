@@ -1,0 +1,160 @@
+---
+title: "A Deep Dive into ANOVA (part 2)"
+author: "Vadim Tyuryaev"
+date: "2024-01-14"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+# Set global chunk options
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Custom Two-Way ANOVA Function
+
+The following function, `two_way_anova`, computes the various components of a
+two-way ANOVA with an interaction term from first principles Such approach 
+provides an insight into the mechanics inherent in ANOVA computations.
+
+```{r two_way_anova_function, echo=TRUE}
+# Two-way ANOVA function with interaction
+two_way_anova <- function(data, response_col, factor1_col, factor2_col) {
+  # Extract data columns
+  response <- data[[response_col]]
+  factor1 <- data[[factor1_col]]
+  factor2 <- data[[factor2_col]]
+  
+  # Identify unique levels for each factor
+  levels_factor1 <- unique(factor1)
+  levels_factor2 <- unique(factor2)
+  
+  # Compute overall (grand) mean and group means
+  grand_mean <- mean(response)
+  means_factor1 <- tapply(response, factor1, mean)
+  means_factor2 <- tapply(response, factor2, mean)
+  
+  # Preallocate a matrix for the interaction means
+  means_interaction <- matrix(0, nrow = length(levels_factor1), 
+                                 ncol = length(levels_factor2))
+  
+  # Calculate cell means for the interaction between factor1 and factor2
+  for (i in 1:length(levels_factor1)) {
+    for (j in 1:length(levels_factor2)) {
+      means_interaction[i, j] <- mean(response[factor1 == levels_factor1[i] & factor2 == levels_factor2[j]])
+    }
+  }
+  
+  # Calculate sums of squares
+  ss_total <- sum((response - grand_mean)^2)
+  ss_factor1 <- sum((means_factor1 - grand_mean)^2 * table(factor1))
+  ss_factor2 <- sum((means_factor2 - grand_mean)^2 * table(factor2))
+  
+  # Preallocate matrix for the interaction sum of squares
+  ss_interaction_mat <- matrix(0, nrow = length(levels_factor1), 
+                                  ncol = length(levels_factor2))
+  
+  # Compute interaction sum of squares for each cell
+  for (i in 1:length(levels_factor1)) {
+    for (j in 1:length(levels_factor2)) {
+      ss_interaction_mat[i, j] <- table(factor1, factor2)[i, j] * 
+        (means_interaction[i, j] - means_factor1[i] - means_factor2[j] + grand_mean)^2
+    }
+  }
+  
+  ss_interaction <- sum(ss_interaction_mat)
+  
+  # Compute error sum of squares
+  ss_error <- ss_total - ss_factor1 - ss_factor2 - ss_interaction
+  
+  # Calculate degrees of freedom for each component
+  df_factor1 <- length(levels_factor1) - 1
+  df_factor2 <- length(levels_factor2) - 1
+  df_interaction <- df_factor1 * df_factor2
+  df_error <- length(response) - (length(levels_factor1) * length(levels_factor2))
+  
+  # Compute mean squares
+  ms_factor1 <- ss_factor1 / df_factor1
+  ms_factor2 <- ss_factor2 / df_factor2
+  ms_interaction <- ss_interaction / df_interaction
+  ms_error <- ss_error / df_error
+  
+  # Calculate F-statistics for each source of variation
+  f_factor1 <- ms_factor1 / ms_error
+  f_factor2 <- ms_factor2 / ms_error
+  f_interaction <- ms_interaction / ms_error
+  
+  # Calculate corresponding p-values
+  p_factor1 <- 1 - pf(f_factor1, df_factor1, df_error)
+  p_factor2 <- 1 - pf(f_factor2, df_factor2, df_error)
+  p_interaction <- 1 - pf(f_interaction, df_interaction, df_error)
+  
+  # Create and return a summary data frame (ANOVA table)
+  results <- data.frame(
+    Factor = c(factor1_col, factor2_col, "Interaction", "Error"),
+    Df = c(df_factor1, df_factor2, df_interaction, df_error),
+    SumSq = c(ss_factor1, ss_factor2, ss_interaction, ss_error),
+    MeanSq = c(ms_factor1, ms_factor2, ms_interaction, ms_error),
+    Fvalue = c(f_factor1, f_factor2, f_interaction, ""),
+    Pval = c(p_factor1, p_factor2, p_interaction, "")
+  )
+  
+  return(results)
+}
+
+```
+
+# Applying the Custom Two-Way ANOVA Function
+
+In this section, we load the [`CO2`](https://www.rdocumentation.org/packages/datasets/versions/3.6.2/topics/CO2) dataset and apply the custom two-way ANOVA function. We fit a two-way ANOVA model
+with interaction term to estimate how the mean of a `uptake` changes according to
+the levels of the factors `Type` and `Treatment`. If the model is additive (i.e. 
+the effects of the factors combine independently), interaction term will not 
+be statistically significant. 
+
+```{r CO2_example, echo=TRUE}
+
+# Load the built-in CO2 dataset
+data(CO2)
+
+# Apply the custom two-way ANOVA function to the CO2 data
+result <- two_way_anova(CO2, "uptake", "Type", "Treatment")
+print(result)
+
+
+```
+
+# Comparison with the Built-in ANOVA Function
+
+We now compare the results from our custom function with those from R's built-in
+`aov` function. The summary output is printed with high precision (8 digits) for
+a detailed comparison.
+
+```{r comparasion, echo=TRUE}
+
+# Perform two-way ANOVA using R's built-in aov function
+anova_model <- aov(uptake ~ Type * Treatment, data = CO2)
+print(summary(anova_model), digits = 8)
+
+```
+
+The results are **identical**. 
+
+# Visualizing the Data with [`ggpubr`](https://cran.r-project.org/web/packages/ggpubr/index.html)
+
+The final section creates a visual summary of the data using the `ggpubr` package. 
+The plot displays the mean and standard error of uptake for each level of Treatment, 
+differentiated by Type. A dot plot overlay shows individual data points. 
+Custom colors (red and green) are used to clearly distinguish between the groups.
+
+```{r Visualizing, echo=TRUE, warning=FALSE,message=FALSE}
+
+library(ggpubr)
+
+ggline(CO2, x = "Treatment", y = "uptake", color = "Type",
+       add = c("mean_se", "dotplot"),
+       palette = c("red", "green"))
+
+```
+
+If the underlying model was strictly additive, what would one expect to see here? 
+Does the plot above reflect this expectation?
