@@ -18,8 +18,8 @@ as well as industry practitioners with a focus on the computational
 aspects of statistical analysis.
 
 The LinkedIn articles cited below, along with the
-[website](vadimtyuryaev.github.io/ANOVA/), cover the following topics in
-depth:
+website(`https://vadimtyuryaev.github.io/ANOVA/`), cover the following
+topics in depth:
 
 - **One-Way ANOVA**: Exploration of its assumptions, the rationale
   underpinning its methodology, implementation from first principles,
